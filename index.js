@@ -9,12 +9,11 @@ app.use(express.json());
 // ------------------ DATABASE CONNECTION (UPDATED FOR RENDER/TIDB) ------------------
 const db = mysql.createConnection({
     // Render Environment Variables से मान पढ़ें:
-    // सुनिश्चित करें कि Render पर DATABASE_HOST, DATABASE_USER, आदि set हैं।
     host: process.env.DATABASE_HOST,     
     user: process.env.DATABASE_USER,     
-    password: process.env.DATABASE_PASSWORD, 
-    database: process.env.DATABASE_NAME, 
-    port: process.env.DATABASE_PORT, 
+    password: process.env.DATABASE_PASSWORD,
+    database: process.env.DATABASE_NAME,
+    port: process.env.DATABASE_PORT,
     
     // TiDB Cloud के लिए SSL/TLS एन्क्रिप्शन आवश्यक है
     ssl: { 
@@ -24,11 +23,10 @@ const db = mysql.createConnection({
 
 db.connect((err) => {
     if (err) {
-        // अब यह आपकी सारी सेटिंग्स और Hostname को Log करेगा
+        // कनेक्शन विफल होने पर प्रोसेस को Exit करें
         console.error("❌ Database connection error:", err.message);
         console.error("DEBUG: Check Render Environment Variables and TiDB IP Access List.");
-        // कनेक्शन विफल होने पर प्रोसेस को Exit करें
-        process.exit(1); 
+        process.exit(1);
     } else {
         console.log("✅ TiDB Cloud Connected Successfully!");
     }
@@ -102,7 +100,7 @@ app.delete("/products/:id", (req, res) => {
 });
 
 // ========================
-// SIGNUP / SIGNIN APIs - (No Change)
+// SIGNUP / SIGNIN APIs - FIXES RETAINED
 // ========================
 
 // SIGNUP
@@ -111,10 +109,15 @@ app.post("/signup", (req, res) => {
     if (password !== Confirm_Password) {
         return res.status(400).json({ message: "Passwords do not match!" });
     }
-    const sql = "INSERT INTO singup (name, gmail, phone, password, Confirm_Password) VALUES (?, ?, ?, ?, ?)";
+    // FIX: Column 'gmail' changed to 'email' (Assuming 'singup' table exists)
+    const sql = "INSERT INTO singup (name, email, phone, password, Confirm_Password) VALUES (?, ?, ?, ?, ?)";
     db.query(sql, [name, email, phone, password, Confirm_Password], (err, result) => {
         if (err) {
             console.error("Error inserting signup data:", err);
+            // Check for duplicate entry error (e.g., duplicate email)
+            if (err.code === 'ER_DUP_ENTRY') {
+                 return res.status(409).json({ message: "Error: Email or Phone already registered." });
+            }
             return res.status(500).json({ message: "Error inserting data", error: err });
         }
         res.json({ message: "Signup successful! Go to SignIn page." });
@@ -124,7 +127,8 @@ app.post("/signup", (req, res) => {
 // SIGNIN
 app.post("/signin", (req, res) => {
     const { email, password } = req.body;
-    const sql = "SELECT * FROM singup WHERE gmail = ? AND password = ?";
+    // FIX: Column 'gmail' changed to 'email' (Assuming 'singup' table exists)
+    const sql = "SELECT * FROM singup WHERE email = ? AND password = ?";
     db.query(sql, [email, password], (err, result) => {
         if (err) {
             console.error("Signin error:", err);
@@ -143,35 +147,61 @@ app.post("/signin", (req, res) => {
 });
 
 // =====================================
-// 🟢 USER ORDER APIs (CRUD) - UPDATED
+// 🟢 USER ORDER APIs (CRUD) - UPDATED FOR CartPage.js
 // =====================================
 
 // Add New Order (CREATE) - /api/orders
 app.post("/api/orders", (req, res) => { 
-    const { user_name, phone_number, product_name, product_image_url, product_description, product_price, address, payment_method } = req.body;
+    // 🔥 NEW/UPDATED: CartPage.js से भेजे गए 9 फ़ील्ड को प्राप्त करना
+    const { 
+        product_id, 
+        product_name, 
+        product_price, 
+        product_image_url, 
+        product_description,
+        user_name, 
+        phone_number, 
+        address, 
+        payment_method 
+    } = req.body;
 
-    // 🔥 IMPROVEMENT: Column names adjusted for consistency with common MySQL practices (using phone and price)
-    // You must ensure your 'orders' table has these exact columns:
-    // user_name, phone, product_name, product_url, description, price, address, payment_method
+    if (!product_id || !user_name || !address || !product_price) {
+        return res.status(400).json({ error: "Missing essential order details." });
+    }
+
+    // 🏆 UPDATED SQL Query: सुनिश्चित करें कि यह आपके MySQL 'orders' टेबल से मेल खाता है।
+    // Note: यहाँ 'product_url' को 'product_image_url' मान लिया गया है और 'phone' को 'phone_number' मान लिया गया है।
     const sql = `
-        INSERT INTO orders (user_name, phone, product_name, product_url, description, price, address, payment_method)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO orders (
+            product_id, user_name, phone, product_name, product_url, description, price, address, payment_method, order_date
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `;
 
-    db.query(sql, [user_name, phone_number, product_name, product_image_url, product_description, product_price, address, payment_method], (err, result) => {
+    // 🏆 UPDATED Values Array: सभी 9 फ़ील्ड को सही क्रम में पास करना
+    const values = [
+        product_id, 
+        user_name, 
+        phone_number, 
+        product_name, 
+        product_image_url, 
+        product_description, 
+        product_price, 
+        address, 
+        payment_method
+    ];
+
+    db.query(sql, values, (err, result) => {
         if (err) {
             console.log("Order Insert Error:", err);
-            // Log the request body and SQL for better debugging
-            // console.log("Request Body:", req.body);
             return res.status(500).json({ error: "Order Insert Failed", details: err.message });
         }
-        res.json({ message: "Order Saved Successfully!", orderId: result.insertId });
+        res.json({ message: "Order Placed Successfully!", orderId: result.insertId });
     });
 });
 
-// Get All Orders (READ) - /api/orders
+// Get All Orders (READ) - /api/orders (No Change)
 app.get("/api/orders", (req, res) => {
-    // Note: If your table has a 'created_at' column, you can order by that.
     const sql = "SELECT * FROM orders ORDER BY id DESC"; 
 
     db.query(sql, (err, result) => {
@@ -183,21 +213,18 @@ app.get("/api/orders", (req, res) => {
     });
 });
 
-// ✍️ UPDATE Order by ID (EDIT) - /api/orders/:id
+// ✍️ UPDATE Order by ID (EDIT) - /api/orders/:id (No Change)
 app.put("/api/orders/:id", (req, res) => {
     const orderId = req.params.id;
-    // We only update customer details from the OrderPage's EditForm.
-    // Ensure the column names used in SQL match your MySQL table.
+    // Note: Column name 'phone' is used in SQL query
     const { user_name, phone_number, address, payment_method } = req.body; 
 
-    // 🔥 IMPROVEMENT: Focusing only on Customer/Shipping details update as that is what the frontend EditForm handles.
     const sql = `
         UPDATE orders 
         SET user_name = ?, phone = ?, address = ?, payment_method = ?
         WHERE id = ?
     `;
     
-    // We are passing phone_number to the 'phone' column in MySQL
     db.query(sql, [user_name, phone_number, address, payment_method, orderId], (err, result) => {
         if (err) {
             console.error("Update Order Error:", err);
@@ -210,7 +237,7 @@ app.put("/api/orders/:id", (req, res) => {
     });
 });
 
-// 🗑️ DELETE Order by ID - /api/orders/:id
+// 🗑️ DELETE Order by ID - /api/orders/:id (No Change)
 app.delete("/api/orders/:id", (req, res) => {
     const orderId = req.params.id;
     const sql = "DELETE FROM orders WHERE id = ?";
