@@ -6,23 +6,34 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ------------------ DATABASE CONNECTION ------------------
+// ------------------ DATABASE CONNECTION (UPDATED FOR RENDER/TIDB) ------------------
 const db = mysql.createConnection({
-    host: "localhost",
-    user: "root",
-    password: "", // agar password hai to yaha likho
-    database: "productdb"
+    // Render Environment Variables से मान पढ़ें:
+    // सुनिश्चित करें कि Render पर DATABASE_HOST, DATABASE_USER, आदि set हैं।
+    host: process.env.DATABASE_HOST,     
+    user: process.env.DATABASE_USER,     
+    password: process.env.DATABASE_PASSWORD, 
+    database: process.env.DATABASE_NAME, 
+    port: process.env.DATABASE_PORT, 
+    
+    // TiDB Cloud के लिए SSL/TLS एन्क्रिप्शन आवश्यक है
+    ssl: { 
+        rejectUnauthorized: true 
+    }
 });
 
 db.connect((err) => {
     if (err) {
-        // Exit process if DB connection fails
+        // अब यह आपकी सारी सेटिंग्स और Hostname को Log करेगा
         console.error("❌ Database connection error:", err.message);
+        console.error("DEBUG: Check Render Environment Variables and TiDB IP Access List.");
+        // कनेक्शन विफल होने पर प्रोसेस को Exit करें
         process.exit(1); 
     } else {
-        console.log("✅ MySQL Connected Successfully!");
+        console.log("✅ TiDB Cloud Connected Successfully!");
     }
 });
+// ------------------ END OF DATABASE CONNECTION UPDATE ------------------
 
 // ========================
 // PRODUCT APIs (Admin) - (No Change)
@@ -220,7 +231,7 @@ app.delete("/api/orders/:id", (req, res) => {
 // ========================
 // SERVER START
 // ========================
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`📡 Server running on port ${PORT}`);
 });
