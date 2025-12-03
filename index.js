@@ -1,5 +1,5 @@
 const express = require("express");
-const mysql = require("mysql2/promise"); // 🔥 1. 'promise' API का उपयोग करें
+const mysql = require("mysql2/promise");
 const cors = require("cors");
 
 const app = express();
@@ -7,13 +7,12 @@ app.use(cors());
 app.use(express.json());
 
 // ------------------ DATABASE CONNECTION (POOL) ------------------
-// 🔥 2. db को 'Pool' से बदला गया
+// 🔥 FIX 1: Connection Pool का उपयोग ताकि Render पर कनेक्शन बंद न हो
 const db = mysql.createPool({ 
-    // Render Environment Variables से मान पढ़ें:
     host: process.env.DATABASE_HOST,      
     user: process.env.DATABASE_USER,      
     password: process.env.DATABASE_PASSWORD,
-    database: process.env.DATABASE_NAME,
+    database: process.env.DATABASE_NAME, // Assuming this is 'productdb'
     port: process.env.DATABASE_PORT,
     ssl: {  
         rejectUnauthorized: true  
@@ -23,7 +22,6 @@ const db = mysql.createPool({
     queueLimit: 0
 });
 
-// कनेक्शन पूल को टेस्ट करने के लिए
 async function testDbConnection() {
     try {
         await db.getConnection();
@@ -38,13 +36,12 @@ testDbConnection();
 // ------------------ END OF DATABASE CONNECTION UPDATE ------------------
 
 // ========================
-// PRODUCT APIs (Admin) - अब सभी 'async' हैं
+// PRODUCT APIs (dashboard table) - All async/await
 // ========================
 
 // GET all products
 app.get("/products", async (req, res) => {
     try {
-        // 'pool' के लिए destructuring का उपयोग करें
         const [results] = await db.query("SELECT * FROM dashboard"); 
         res.json(results);
     } catch (error) {
@@ -103,20 +100,20 @@ app.delete("/products/:id", async (req, res) => {
 });
 
 // ========================
-// SIGNUP / SIGNIN APIs - अब सभी 'async' हैं और Table Name 'signup' है
+// SIGNUP / SIGNIN APIs (singup table)
 // ========================
 
 // SIGNUP
-app.post("/signup", async (req, res) => { // <-- async जोड़ा गया
+app.post("/signup", async (req, res) => {
     const { name, email, phone, password, Confirm_Password } = req.body;
     if (password !== Confirm_Password) {
         return res.status(400).json({ message: "Passwords do not match!" });
     }
-    // 🔥 FIX: Table name 'singup' changed to 'signup'
-    const sql = "INSERT INTO signup (name, email, phone, password, Confirm_Password) VALUES (?, ?, ?, ?, ?)";
+    // 🔥 FIX 2: Table name is 'singup' and column is 'gmail' as per your original SQL dump
+    const sql = "INSERT INTO singup (name, gmail, phone, password, Confirm_Password) VALUES (?, ?, ?, ?, ?)";
     
     try {
-        const [result] = await db.query(sql, [name, email, phone, password, Confirm_Password]); // <-- await जोड़ा गया
+        const [result] = await db.query(sql, [name, email, phone, password, Confirm_Password]); 
         res.json({ message: "Signup successful! Go to SignIn page." });
     } catch (err) {
         console.error("Error inserting signup data:", err);
@@ -128,15 +125,16 @@ app.post("/signup", async (req, res) => { // <-- async जोड़ा गया
 });
 
 // SIGNIN
-app.post("/signin", async (req, res) => { // <-- async जोड़ा गया
+app.post("/signin", async (req, res) => {
     const { email, password } = req.body;
-    // 🔥 FIX: Table name 'singup' changed to 'signup'
-    const sql = "SELECT * FROM signup WHERE email = ? AND password = ?";
+    // 🔥 FIX 3: Table name is 'singup' and column is 'gmail' as per your original SQL dump
+    const sql = "SELECT * FROM singup WHERE gmail = ? AND password = ?";
     
     try {
-        const [result] = await db.query(sql, [email, password]); // <-- await जोड़ा गया
+        const [result] = await db.query(sql, [email, password]); 
         
         if (result.length > 0) {
+            // Note: If you stored other details in the database, they will be in result[0]
             res.json({
                 message: "Login Successful! Redirecting to Admin Page",
                 admin: result[0]
@@ -151,11 +149,11 @@ app.post("/signin", async (req, res) => { // <-- async जोड़ा गया
 });
 
 // =====================================
-// 🟢 USER ORDER APIs (CRUD) - अब सभी 'async' हैं
+// 🟢 USER ORDER APIs (orders table)
 // =====================================
 
 // Add New Order (CREATE) - /api/orders
-app.post("/api/orders", async (req, res) => { // <-- async जोड़ा गया
+app.post("/api/orders", async (req, res) => {
     const { product_id, product_name, product_price, product_image_url, product_description,
         user_name, phone_number, address, payment_method } = req.body;
 
@@ -169,10 +167,11 @@ app.post("/api/orders", async (req, res) => { // <-- async जोड़ा ग�
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `;
+    // Values map to: (product_id, user_name, phone, product_name, product_url, description, price, address, payment_method)
     const values = [product_id, user_name, phone_number, product_name, product_image_url, product_description, product_price, address, payment_method];
 
     try {
-        const [result] = await db.query(sql, values); // <-- await जोड़ा गया
+        const [result] = await db.query(sql, values);
         res.json({ message: "Order Placed Successfully!", orderId: result.insertId });
     } catch (err) {
         console.log("Order Insert Error:", err);
@@ -181,10 +180,10 @@ app.post("/api/orders", async (req, res) => { // <-- async जोड़ा ग�
 });
 
 // Get All Orders (READ) - /api/orders
-app.get("/api/orders", async (req, res) => { // <-- async जोड़ा गया
+app.get("/api/orders", async (req, res) => {
     const sql = "SELECT * FROM orders ORDER BY id DESC";
     try {
-        const [result] = await db.query(sql); // <-- await जोड़ा गया
+        const [result] = await db.query(sql);
         res.json(result);
     } catch (err) {
         console.log("Error fetching orders:", err);
@@ -193,7 +192,7 @@ app.get("/api/orders", async (req, res) => { // <-- async जोड़ा गय
 });
 
 // ✍️ UPDATE Order by ID (EDIT) - /api/orders/:id
-app.put("/api/orders/:id", async (req, res) => { // <-- async जोड़ा गया
+app.put("/api/orders/:id", async (req, res) => {
     const orderId = req.params.id;
     const { user_name, phone_number, address, payment_method } = req.body;
 
@@ -203,7 +202,7 @@ app.put("/api/orders/:id", async (req, res) => { // <-- async जोड़ा �
     `;
     
     try {
-        const [result] = await db.query(sql, [user_name, phone_number, address, payment_method, orderId]); // <-- await जोड़ा गया
+        const [result] = await db.query(sql, [user_name, phone_number, address, payment_method, orderId]);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: "Order not found." });
         }
@@ -215,12 +214,12 @@ app.put("/api/orders/:id", async (req, res) => { // <-- async जोड़ा �
 });
 
 // 🗑️ DELETE Order by ID - /api/orders/:id
-app.delete("/api/orders/:id", async (req, res) => { // <-- async जोड़ा गया
+app.delete("/api/orders/:id", async (req, res) => {
     const orderId = req.params.id;
     const sql = "DELETE FROM orders WHERE id = ?";
 
     try {
-        const [result] = await db.query(sql, [orderId]); // <-- await जोड़ा गया
+        const [result] = await db.query(sql, [orderId]);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: "Order not found." });
         }
