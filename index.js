@@ -1,140 +1,141 @@
 const express = require("express");
-const mysql = require("mysql2");
+const mysql = require("mysql2/promise"); // 🔥 1. 'promise' API का उपयोग करें
 const cors = require("cors");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ------------------ DATABASE CONNECTION (UPDATED FOR RENDER/TIDB) ------------------
-const db = mysql.createConnection({
+// ------------------ DATABASE CONNECTION (POOL) ------------------
+// 🔥 2. db को 'Pool' से बदला गया
+const db = mysql.createPool({ 
     // Render Environment Variables से मान पढ़ें:
-    host: process.env.DATABASE_HOST,     
-    user: process.env.DATABASE_USER,     
+    host: process.env.DATABASE_HOST,      
+    user: process.env.DATABASE_USER,      
     password: process.env.DATABASE_PASSWORD,
     database: process.env.DATABASE_NAME,
     port: process.env.DATABASE_PORT,
-    
-    // TiDB Cloud के लिए SSL/TLS एन्क्रिप्शन आवश्यक है
-    ssl: { 
-        rejectUnauthorized: true 
-    }
+    ssl: {  
+        rejectUnauthorized: true  
+    },
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-db.connect((err) => {
-    if (err) {
-        // कनेक्शन विफल होने पर प्रोसेस को Exit करें
-        console.error("❌ Database connection error:", err.message);
-        console.error("DEBUG: Check Render Environment Variables and TiDB IP Access List.");
+// कनेक्शन पूल को टेस्ट करने के लिए
+async function testDbConnection() {
+    try {
+        await db.getConnection();
+        console.log("✅ TiDB Cloud Pool Connected Successfully!");
+    } catch (err) {
+        console.error("❌ Database pool error (FATAL):", err.message);
+        console.error("DEBUG: Check Environment Variables and TiDB IP Access List.");
         process.exit(1);
-    } else {
-        console.log("✅ TiDB Cloud Connected Successfully!");
     }
-});
+}
+testDbConnection();
 // ------------------ END OF DATABASE CONNECTION UPDATE ------------------
 
 // ========================
-// PRODUCT APIs (Admin) - (No Change)
+// PRODUCT APIs (Admin) - अब सभी 'async' हैं
 // ========================
 
 // GET all products
-app.get("/products", (req, res) => {
-    db.query("SELECT * FROM dashboard", (error, results) => {
-        if (error) {
-            console.error("Error fetching products:", error);
-            return res.status(500).json({ error: "Database fetch error" });
-        }
+app.get("/products", async (req, res) => {
+    try {
+        // 'pool' के लिए destructuring का उपयोग करें
+        const [results] = await db.query("SELECT * FROM dashboard"); 
         res.json(results);
-    });
+    } catch (error) {
+        console.error("Error fetching products:", error);
+        return res.status(500).json({ error: "Database fetch error" });
+    }
 });
 
 // ADD product
-app.post("/products", (req, res) => {
+app.post("/products", async (req, res) => {
     const { Product_name, Price, Image, Category, Description } = req.body;
     if (!Product_name || !Price) {
         return res.status(400).json({ message: "Product Name and Price are required!" });
     }
     const sql = `INSERT INTO dashboard (Product_name, Price, Image, Category, Description)
                  VALUES (?, ?, ?, ?, ?)`;
-    db.query(sql, [Product_name, Price, Image, Category, Description], (error, result) => {
-        if (error) {
-            console.error("Error adding product:", error);
-            return res.status(500).json({ error: "Database insert error" });
-        }
+    try {
+        const [result] = await db.query(sql, [Product_name, Price, Image, Category, Description]);
         res.json({ message: "Product Added Successfully!", id: result.insertId });
-    });
+    } catch (error) {
+        console.error("Error adding product:", error);
+        return res.status(500).json({ error: "Database insert error" });
+    }
 });
 
 // UPDATE product
-app.put("/products/:id", (req, res) => {
+app.put("/products/:id", async (req, res) => {
     const { id } = req.params;
     const { Product_name, Price, Image, Category, Description } = req.body;
-    const sql = `UPDATE dashboard 
-                 SET Product_name = ?, Price = ?, Image = ?, Category = ?, Description = ?
-                 WHERE id = ?`;
-    db.query(sql, [Product_name, Price, Image, Category, Description, id], (error, result) => {
-        if (error) {
-            console.error("Error updating product:", error);
-            return res.status(500).json({ error: "Database update error" });
-        }
+    const sql = `UPDATE dashboard SET Product_name = ?, Price = ?, Image = ?, Category = ?, Description = ? WHERE id = ?`;
+    try {
+        const [result] = await db.query(sql, [Product_name, Price, Image, Category, Description, id]);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: "Product not found" });
         }
         res.json({ message: "Product Updated Successfully!" });
-    });
+    } catch (error) {
+        console.error("Error updating product:", error);
+        return res.status(500).json({ error: "Database update error" });
+    }
 });
 
 // DELETE product
-app.delete("/products/:id", (req, res) => {
+app.delete("/products/:id", async (req, res) => {
     const { id } = req.params;
-    db.query("DELETE FROM dashboard WHERE id = ?", [id], (error, result) => {
-        if (error) {
-            console.error("Error deleting product:", error);
-            return res.status(500).json({ error: "Database delete error" });
-        }
+    try {
+        const [result] = await db.query("DELETE FROM dashboard WHERE id = ?", [id]);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: "Product not found" });
         }
         res.json({ message: "Product Deleted Successfully!" });
-    });
+    } catch (error) {
+        console.error("Error deleting product:", error);
+        return res.status(500).json({ error: "Database delete error" });
+    }
 });
 
 // ========================
-// SIGNUP / SIGNIN APIs - FIXES RETAINED
+// SIGNUP / SIGNIN APIs - अब सभी 'async' हैं और Table Name 'signup' है
 // ========================
 
 // SIGNUP
-app.post("/signup", (req, res) => {
+app.post("/signup", async (req, res) => { // <-- async जोड़ा गया
     const { name, email, phone, password, Confirm_Password } = req.body;
     if (password !== Confirm_Password) {
         return res.status(400).json({ message: "Passwords do not match!" });
     }
-    // FIX: Column 'gmail' changed to 'email' (Assuming 'singup' table exists)
-    const sql = "INSERT INTO singup (name, email, phone, password, Confirm_Password) VALUES (?, ?, ?, ?, ?)";
-    db.query(sql, [name, email, phone, password, Confirm_Password], (err, result) => {
-        if (err) {
-            console.error("Error inserting signup data:", err);
-            // Check for duplicate entry error (e.g., duplicate email)
-            if (err.code === 'ER_DUP_ENTRY') {
-                 return res.status(409).json({ message: "Error: Email or Phone already registered." });
-            }
-            return res.status(500).json({ message: "Error inserting data", error: err });
-        }
+    // 🔥 FIX: Table name 'singup' changed to 'signup'
+    const sql = "INSERT INTO signup (name, email, phone, password, Confirm_Password) VALUES (?, ?, ?, ?, ?)";
+    
+    try {
+        const [result] = await db.query(sql, [name, email, phone, password, Confirm_Password]); // <-- await जोड़ा गया
         res.json({ message: "Signup successful! Go to SignIn page." });
-    });
+    } catch (err) {
+        console.error("Error inserting signup data:", err);
+        if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: "Error: Email or Phone already registered." });
+        }
+        return res.status(500).json({ message: "Error inserting data", error: err });
+    }
 });
 
 // SIGNIN
-app.post("/signin", (req, res) => {
+app.post("/signin", async (req, res) => { // <-- async जोड़ा गया
     const { email, password } = req.body;
-    // FIX: Column 'gmail' changed to 'email' (Assuming 'singup' table exists)
-    const sql = "SELECT * FROM singup WHERE email = ? AND password = ?";
-    db.query(sql, [email, password], (err, result) => {
-        if (err) {
-            console.error("Signin error:", err);
-            return res.status(500).json({ message: "Login Error", error: err });
-        }
-
+    // 🔥 FIX: Table name 'singup' changed to 'signup'
+    const sql = "SELECT * FROM signup WHERE email = ? AND password = ?";
+    
+    try {
+        const [result] = await db.query(sql, [email, password]); // <-- await जोड़ा गया
+        
         if (result.length > 0) {
             res.json({
                 message: "Login Successful! Redirecting to Admin Page",
@@ -143,115 +144,91 @@ app.post("/signin", (req, res) => {
         } else {
             res.status(400).json({ message: "Invalid email or password" });
         }
-    });
+    } catch (err) {
+        console.error("Signin error:", err);
+        return res.status(500).json({ message: "Login Error", error: err });
+    }
 });
 
 // =====================================
-// 🟢 USER ORDER APIs (CRUD) - UPDATED FOR CartPage.js
+// 🟢 USER ORDER APIs (CRUD) - अब सभी 'async' हैं
 // =====================================
 
 // Add New Order (CREATE) - /api/orders
-app.post("/api/orders", (req, res) => { 
-    // 🔥 NEW/UPDATED: CartPage.js से भेजे गए 9 फ़ील्ड को प्राप्त करना
-    const { 
-        product_id, 
-        product_name, 
-        product_price, 
-        product_image_url, 
-        product_description,
-        user_name, 
-        phone_number, 
-        address, 
-        payment_method 
-    } = req.body;
+app.post("/api/orders", async (req, res) => { // <-- async जोड़ा गया
+    const { product_id, product_name, product_price, product_image_url, product_description,
+        user_name, phone_number, address, payment_method } = req.body;
 
     if (!product_id || !user_name || !address || !product_price) {
         return res.status(400).json({ error: "Missing essential order details." });
     }
 
-    // 🏆 UPDATED SQL Query: सुनिश्चित करें कि यह आपके MySQL 'orders' टेबल से मेल खाता है।
-    // Note: यहाँ 'product_url' को 'product_image_url' मान लिया गया है और 'phone' को 'phone_number' मान लिया गया है।
     const sql = `
         INSERT INTO orders (
             product_id, user_name, phone, product_name, product_url, description, price, address, payment_method, order_date
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `;
+    const values = [product_id, user_name, phone_number, product_name, product_image_url, product_description, product_price, address, payment_method];
 
-    // 🏆 UPDATED Values Array: सभी 9 फ़ील्ड को सही क्रम में पास करना
-    const values = [
-        product_id, 
-        user_name, 
-        phone_number, 
-        product_name, 
-        product_image_url, 
-        product_description, 
-        product_price, 
-        address, 
-        payment_method
-    ];
-
-    db.query(sql, values, (err, result) => {
-        if (err) {
-            console.log("Order Insert Error:", err);
-            return res.status(500).json({ error: "Order Insert Failed", details: err.message });
-        }
+    try {
+        const [result] = await db.query(sql, values); // <-- await जोड़ा गया
         res.json({ message: "Order Placed Successfully!", orderId: result.insertId });
-    });
+    } catch (err) {
+        console.log("Order Insert Error:", err);
+        return res.status(500).json({ error: "Order Insert Failed", details: err.message });
+    }
 });
 
-// Get All Orders (READ) - /api/orders (No Change)
-app.get("/api/orders", (req, res) => {
-    const sql = "SELECT * FROM orders ORDER BY id DESC"; 
-
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.log("Error fetching orders:", err);
-            return res.status(500).json({ error: "Order Fetch Failed" });
-        }
+// Get All Orders (READ) - /api/orders
+app.get("/api/orders", async (req, res) => { // <-- async जोड़ा गया
+    const sql = "SELECT * FROM orders ORDER BY id DESC";
+    try {
+        const [result] = await db.query(sql); // <-- await जोड़ा गया
         res.json(result);
-    });
+    } catch (err) {
+        console.log("Error fetching orders:", err);
+        return res.status(500).json({ error: "Order Fetch Failed" });
+    }
 });
 
-// ✍️ UPDATE Order by ID (EDIT) - /api/orders/:id (No Change)
-app.put("/api/orders/:id", (req, res) => {
+// ✍️ UPDATE Order by ID (EDIT) - /api/orders/:id
+app.put("/api/orders/:id", async (req, res) => { // <-- async जोड़ा गया
     const orderId = req.params.id;
-    // Note: Column name 'phone' is used in SQL query
-    const { user_name, phone_number, address, payment_method } = req.body; 
+    const { user_name, phone_number, address, payment_method } = req.body;
 
     const sql = `
-        UPDATE orders 
-        SET user_name = ?, phone = ?, address = ?, payment_method = ?
+        UPDATE orders SET user_name = ?, phone = ?, address = ?, payment_method = ?
         WHERE id = ?
     `;
     
-    db.query(sql, [user_name, phone_number, address, payment_method, orderId], (err, result) => {
-        if (err) {
-            console.error("Update Order Error:", err);
-            return res.status(500).json({ error: "Order Update Failed" });
-        }
+    try {
+        const [result] = await db.query(sql, [user_name, phone_number, address, payment_method, orderId]); // <-- await जोड़ा गया
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: "Order not found." });
         }
         res.json({ message: `Order ID ${orderId} updated successfully.` });
-    });
+    } catch (err) {
+        console.error("Update Order Error:", err);
+        return res.status(500).json({ error: "Order Update Failed" });
+    }
 });
 
-// 🗑️ DELETE Order by ID - /api/orders/:id (No Change)
-app.delete("/api/orders/:id", (req, res) => {
+// 🗑️ DELETE Order by ID - /api/orders/:id
+app.delete("/api/orders/:id", async (req, res) => { // <-- async जोड़ा गया
     const orderId = req.params.id;
     const sql = "DELETE FROM orders WHERE id = ?";
 
-    db.query(sql, [orderId], (err, result) => {
-        if (err) {
-            console.error("Delete Order Error:", err);
-            return res.status(500).json({ error: "Order Delete Failed" });
-        }
+    try {
+        const [result] = await db.query(sql, [orderId]); // <-- await जोड़ा गया
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: "Order not found." });
         }
         res.json({ message: `Order ID ${orderId} deleted successfully.` });
-    });
+    } catch (err) {
+        console.error("Delete Order Error:", err);
+        return res.status(500).json({ error: "Order Delete Failed" });
+    }
 });
 
 
